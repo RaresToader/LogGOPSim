@@ -20,6 +20,9 @@ find_package(Graphviz REQUIRED)
 include_directories(${GRAPHVIZ_INCLUDE_DIRS})
 add_gengetopt_files(LogGOPSim/loggopsim_cmdline)
 add_executable(LogGOPSim LogGOPSim/loggopsim_cmdline.c LogGOPSim/LogGOPSim.cpp)
+execute_process(COMMAND git rev-parse --short HEAD WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+                OUTPUT_VARIABLE GOALX_GIT_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+target_compile_definitions(LogGOPSim PRIVATE GOALX_BUILD_COMMIT="${GOALX_GIT_COMMIT}" GOALX_BUILD_FLAGS="${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
 target_link_libraries(LogGOPSim ${GRAPHVIZ_CGRAPH_LIBRARY})
 
 # build txt2bin
@@ -73,6 +76,9 @@ add_test(NAME loggopsim_binomialtreebcast COMMAND LogGOPSim -f schedule.bin DEPE
 add_test(NAME schedgen2_bcast COMMAND ${PYTHON_EXECUTABLE} schedgen.py bcast --output schedule.goal WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/Schedgen2)
 add_test(NAME txt2bin_schedgen2_bcast COMMAND txt2bin -i ${PROJECT_SOURCE_DIR}/Schedgen2/schedule.goal -o schedule.bin)
 add_test(NAME loggopsim_schedgen2_bcast COMMAND LogGOPSim -f schedule.bin)
+
+# dlopen support for decoder plugins
+target_link_libraries(LogGOPSim ${CMAKE_DL_LIBS})
 
 # test the self-describing GOALX format: legacy and GOALX must simulate identically
 set(GOALX_TESTS ${PROJECT_SOURCE_DIR}/../tests)

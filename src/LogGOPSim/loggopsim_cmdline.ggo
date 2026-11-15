@@ -23,7 +23,14 @@ option "network-file"   -  "Input file for network (annotated dot format)" strin
 option "qstat"          -  "Enable PQ and UQ statistics.  Argument is output filename prefix" default="Unknown" string optional
 
 option "require"        -  "Extra fields the trace must provide, as name[:min_width],... (e.g. gpu_id:6)" string optional
+option "cpu-from"       -  "Take each op's CPU index from this custom field (e.g. stream_id) instead of the builtin cpu; the trace must provide it" string typestr="field" optional
+option "nic-from"       -  "Take each op's NIC index from this custom field (e.g. gpu_id) instead of the builtin nic; the trace must provide it" string typestr="field" optional
 option "print-schema"   -  "Print the trace's format and schema, then exit" flag off
-option "decoder"        -  "Record decoder: auto (fixed for legacy traces, interp for GOALX), interp (schema-agnostic interpreter), interp-generic (the interpreter without its fast path for simple fields) or fixed (original hand-written decoder, legacy traces only)" values="auto","interp","interp-generic","fixed" default="auto" string optional
+option "decoder"        -  "Record decoder: auto (fixed for legacy traces, interp for GOALX), interp (optimized interpreter), interp-generic (naive loop-and-switch interpreter), fixed (original hand-written decoder, legacy traces only), free (pre-decodes everything at load: an upper bound) or plugin:<path.so> (a shared object exporting goalx_make_decoder)" default="auto" string optional
 option "bench-decode"   -  "Decode every record of the trace <reps> times, print the decoder throughput and exit" int typestr="reps" optional
-option "timing"         -  "Print load and simulation times in seconds" flag off
+option "bench-order"    -  "Order of the decode-only benchmark: file (every record, four calls each) or a file written by --record-calls (the calls of a real simulation run)" string default="file" optional
+option "bench-min-seconds" - "Double the decode benchmark repetitions until a run takes at least this long" double default="1.0" optional
+option "bench-inline"   -  "Decode benchmark: call the built-in interp/fixed functions directly instead of through the decoder table" flag off
+option "record-calls"   -  "Write every decoder call of this run to <file> (for --bench-order)" string typestr="file" optional
+option "timing"         -  "Print the time of each load phase and of the simulation, in seconds" flag off
+option "emit-results"   -  "Write this run's measurements and build information as JSON to <file>" string typestr="file" optional

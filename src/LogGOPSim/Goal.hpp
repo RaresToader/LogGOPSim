@@ -7,13 +7,26 @@
 
 typedef Node* goalop_t;
 
+enum GoalMode { GOAL_WRITE_LEGACY, GOAL_WRITE_GOALX, GOAL_COLLECT_STATS };
+
+/* GOAL keywords and builtin field names cannot name a custom attribute */
+static inline bool reserved_attribute_name(const std::string& n) {
+	static const char* const kw[] = { "send", "recv", "calc", "requires", "irequires", "rank", "num_ranks",
+	                                   "to", "from", "tag", "cpu", "nic", "b" };
+	for (size_t i = 0; i < sizeof(kw) / sizeof(kw[0]); i++) if (n == kw[i]) return true;
+	return Schema::builtin_kind(n) != FK_CUSTOM;
+}
+
 class Goal {
 
 	private:
 		Graph graph;
 		uint32_t rank;
 		uint32_t num_ranks;
-		const Schema* schema; // NULL writes the legacy 39-byte format
+		GoalMode mode;
+		const Schema* schema;      // GOAL_WRITE_GOALX: the layout to write
+		FieldStats* stats;         // filled in GOAL_COLLECT_STATS, read in GOAL_WRITE_GOALX
+		CustomNames* names;        // custom attribute names, shared by all ranks
 
 		uint32_t MaxCPU(uint32_t cpu = 0) {
 			static uint32_t max_cpu = 0;
@@ -29,7 +42,27 @@ class Goal {
 			
 	public:
 
-		Goal() : rank(0), num_ranks(0), schema(NULL) {}
+		Goal() : rank(0), num_ranks(0), mode(GOAL_WRITE_LEGACY), schema(NULL), stats(NULL), names(NULL) {}
+
+		/* adds a custom attribute to op; exits with an error naming the line if it is not allowed */
+		void Custom(goalop_t op, const std::string& name, uint64_t value, uint32_t line) {
+			if (reserved_attribute_name(name)) {
+				fprintf(stderr, "Error in line %u: '%s' is reserved and cannot be a custom attribute\n", line, name.c_str());
+				exit(EXIT_FAILURE);
+			}
+			if (mode == GOAL_WRITE_LEGACY || names == NULL) {
+				fprintf(stderr, "Error in line %u: custom attribute '%s' requires --format goalx\n", line, name.c_str());
+				exit(EXIT_FAILURE);
+			}
+			uint16_t slot = names->get(name);
+			for (size_t i = 0; i < op->Custom.size(); i++) {
+				if (op->Custom[i].first == slot) {
+					fprintf(stderr, "Error in line %u: attribute '%s' is given twice\n", line, name.c_str());
+					exit(EXIT_FAILURE);
+				}
+			}
+			op->Custom.push_back(std::make_pair(slot, value));
+		}
 	
 		goalop_t Send(uint32_t src, uint64_t dest, uint64_t size, uint64_t tag, uint32_t cpu, uint32_t nic) {
 			
@@ -95,6 +128,11 @@ class Goal {
 		void SerializeSchedule(char* filename) {
 			
 			static int fd;
+
+			if (mode == GOAL_COLLECT_STATS) {
+				graph.collect_stats(*stats, *names, num_ranks);
+				return;
+			}
 			
 			// create/open binary schedule if it is the first rank (rank 0)
 			if (rank==0) {
@@ -106,8 +144,8 @@ class Goal {
 				}
 			}
 
-			if (schema != NULL) {
-				graph.serialize_goalx(fd, rank, num_ranks, MaxCPU(), MaxNIC(), *schema);
+			if (mode == GOAL_WRITE_GOALX) {
+				graph.serialize_goalx(fd, rank, num_ranks, stats->max_cpu, stats->max_nic, *schema, *names);
 			} else {
 				// values above 255 are rejected per node by serialize_mmap
 				graph.serialize_mmap(fd, rank, num_ranks, (uint8_t) std::min(MaxCPU(), 255u), (uint8_t) std::min(MaxNIC(), 255u));
@@ -129,8 +167,11 @@ class Goal {
 			num_ranks = nr;
 		}
 
-		void SetSchema(const Schema* s) {
+		void SetMode(GoalMode m, const Schema* s, FieldStats* st, CustomNames* n) {
+			mode = m;
 			schema = s;
+			stats = st;
+			names = n;
 		}
 
 };

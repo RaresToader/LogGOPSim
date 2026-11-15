@@ -31,7 +31,22 @@
 #include "loggopsim_cmdline.h"
 
 #include <sys/time.h>
+#include <sys/resource.h>
+#include <sys/stat.h>
 #include <chrono>
+#include <fstream>
+
+#if defined(__has_include)
+#if __has_include("build_info.h")
+#include "build_info.h"
+#endif
+#endif
+#ifndef GOALX_BUILD_COMMIT
+#define GOALX_BUILD_COMMIT "unknown"
+#endif
+#ifndef GOALX_BUILD_FLAGS
+#define GOALX_BUILD_FLAGS "unknown"
+#endif
 
 #include "LogGOPSim.hpp"
 #include "Network.hpp"
@@ -125,6 +140,57 @@ static MATCH_INLINE int match(const graph_node_properties &elem, ruq_t *q, ruqel
 #endif
 
 
+/* JSON string literal */
+static std::string json_str(const std::string& v) {
+  std::string out = "\"";
+  for (size_t i = 0; i < v.size(); i++) {
+    char c = v[i];
+    if (c == '"' || c == '\\') { out += '\\'; out += c; }
+    else if ((unsigned char) c < 0x20) { char buf[8]; snprintf(buf, sizeof buf, "\\u%04x", c); out += buf; }
+    else out += c;
+  }
+  return out + "\"";
+}
+
+/* one JSON object with this run's measurements and the build that produced them (for audit and plots) */
+static void emit_results(const char* path, const char* trace, Parser& parser, const char* build, double sim_s,
+                         uint64_t events, uint64_t max_finish) {
+  struct stat st;
+  long long bytes = stat(trace, &st) == 0 ? (long long) st.st_size : -1;
+  struct rusage ru;
+  getrusage(RUSAGE_SELF, &ru);
+#ifdef __APPLE__
+  unsigned long long rss = (unsigned long long) ru.ru_maxrss;          // bytes
+#else
+  unsigned long long rss = (unsigned long long) ru.ru_maxrss * 1024;   // KiB
+#endif
+  const Schema& s = parser.GetSchema();
+  char hash[32];
+  snprintf(hash, sizeof hash, "%016llx", (unsigned long long) s.hash());
+  FILE* f = fopen(path, "w");
+  if (f == NULL) { perror(path); exit(EXIT_FAILURE); }
+  fprintf(f, "{\n");
+  fprintf(f, "  \"trace\": %s,\n", json_str(trace).c_str());
+  fprintf(f, "  \"trace_bytes\": %lld,\n", bytes);
+  fprintf(f, "  \"format\": %s,\n", json_str(s.legacy ? "legacy" : "goalx-1.1").c_str());
+  fprintf(f, "  \"schema_hash\": %s,\n", json_str(s.legacy ? "legacy" : hash).c_str());
+  fprintf(f, "  \"decoder\": %s,\n", json_str(parser.GetDecoderName()).c_str());
+  fprintf(f, "  \"build\": %s,\n", json_str(build).c_str());
+  fprintf(f, "  \"compiler\": %s,\n", json_str(__VERSION__).c_str());
+  fprintf(f, "  \"cxxflags\": %s,\n", json_str(GOALX_BUILD_FLAGS).c_str());
+  fprintf(f, "  \"git_commit\": %s,\n", json_str(GOALX_BUILD_COMMIT).c_str());
+  fprintf(f, "  \"header_s\": %.9f,\n", parser.timing.header_s);
+  fprintf(f, "  \"validate_s\": %.9f,\n", parser.timing.validate_s);
+  fprintf(f, "  \"decoder_init_s\": %.9f,\n", parser.timing.decoder_init_s);
+  fprintf(f, "  \"counters_s\": %.9f,\n", parser.timing.counters_s);
+  fprintf(f, "  \"sim_s\": %.9f,\n", sim_s);
+  fprintf(f, "  \"events\": %llu,\n", (unsigned long long) events);
+  fprintf(f, "  \"peak_rss_bytes\": %llu,\n", rss);
+  fprintf(f, "  \"max_finish_time\": %llu\n", (unsigned long long) max_finish);
+  fprintf(f, "}\n");
+  fclose(f);
+}
+
 int main(int argc, char **argv) {
 
 #ifdef STRICT_ORDER
@@ -157,26 +223,61 @@ int main(int argc, char **argv) {
 #else
   const char* build = "debug";
 #endif
-  std::chrono::steady_clock::time_point tload = std::chrono::steady_clock::now();
-  Parser parser(args_info.filename_arg, args_info.save_mem_given, args_info.require_arg, args_info.decoder_arg);
-  double load_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - tload).count();
+  std::vector<Requirement> reqs;
+  {
+    std::string err;
+    if (!parse_requirements(args_info.require_arg, &reqs, &err)) {
+      fprintf(stderr, "Invalid --require: %s\n", err.c_str());
+      return EXIT_FAILURE;
+    }
+  }
+  // simulator features that need fields of the trace
+  if (args_info.cpu_from_given) { Requirement r = { args_info.cpu_from_arg, 1, "--cpu-from" }; reqs.push_back(r); }
+  if (args_info.nic_from_given) { Requirement r = { args_info.nic_from_arg, 1, "--nic-from" }; reqs.push_back(r); }
+  Parser parser(args_info.filename_arg, args_info.save_mem_given, reqs, args_info.decoder_arg, false,
+                args_info.record_calls_given ? args_info.record_calls_arg : NULL);
+  if (args_info.cpu_from_given) parser.UseCustomAsResource(false, args_info.cpu_from_arg, "--cpu-from");
+  if (args_info.nic_from_given) parser.UseCustomAsResource(true, args_info.nic_from_arg, "--nic-from");
   if (args_info.print_schema_given) {
     parser.PrintSchema(stdout);
     return 0;
   }
   if (args_info.bench_decode_given) {
-    // decoder throughput only: no dependency lists, no simulation
-    uint64_t records = 0, checksum = 0;
-    for (size_t r = 0; r < parser.schedules.size(); r++) records += parser.schedules[r].GetNumNodes();
-    std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
-    for (int rep = 0; rep < args_info.bench_decode_arg; rep++) {
-      checksum = 0;
-      for (size_t r = 0; r < parser.schedules.size(); r++) checksum += parser.schedules[r].DecodeAll();
+    // decoder throughput only: replays decoder calls, no simulation
+    std::vector<GoalxCall> calls;
+    std::string order = args_info.bench_order_arg;
+    if (order == "file") {
+      calls = parser.SequentialCalls();
+    } else {
+      FILE* f = fopen(order.c_str(), "rb");
+      if (f == NULL) { perror(order.c_str()); return EXIT_FAILURE; }
+      GoalxCall c;
+      while (fread(&c, sizeof(c), 1, f) == 1) calls.push_back(c);
+      fclose(f);
+      std::string err;
+      if (!parser.CheckCalls(calls, &err)) { fprintf(stderr, "Error: %s\n", err.c_str()); return EXIT_FAILURE; }
+      order = "sim";
     }
-    double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-    printf("DECODE: decoder=%s build=%s records=%llu reps=%i seconds=%.6f records_per_s=%.1f checksum=%llu\n",
-           parser.GetDecoderName(), build, (unsigned long long) records, args_info.bench_decode_arg, s,
-           s > 0 ? records * (double) args_info.bench_decode_arg / s : 0.0, (unsigned long long) checksum);
+    if (args_info.bench_inline_given && !parser.CanReplayInline()) {
+      fprintf(stderr, "Error: --bench-inline is available only for the interp and fixed decoders\n");
+      return EXIT_FAILURE;
+    }
+    int reps = args_info.bench_decode_arg < 1 ? 1 : args_info.bench_decode_arg;
+    uint64_t checksum = 0;
+    double s = 0;
+    while (true) {
+      std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+      for (int rep = 0; rep < reps; rep++) {
+        checksum = args_info.bench_inline_given ? parser.ReplayInline(calls) : parser.Replay(calls);
+      }
+      s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+      if (s >= args_info.bench_min_seconds_arg || reps >= (1 << 28)) break;
+      reps *= 2;
+    }
+    printf("DECODE: decoder=%s%s build=%s order=%s calls=%llu reps=%i seconds=%.6f calls_per_s=%.1f checksum=%llu\n",
+           parser.GetDecoderName(), args_info.bench_inline_given ? "+inline" : "", build, order.c_str(),
+           (unsigned long long) calls.size(), reps, s, s > 0 ? calls.size() * (double) reps / s : 0.0,
+           (unsigned long long) checksum);
     return 0;
   }
   Network net(&args_info);
@@ -614,7 +715,14 @@ int main(int argc, char **argv) {
 #endif
 	printf("PERFORMANCE: Processes: %i \t Events: %lu \t Time: %lu s \t Speed: %.2f ev/s\n", p, (long unsigned int)aqtime, (long unsigned int)diff, (float)aqtime/(float)diff);
   if (args_info.timing_given) {
-    printf("TIMING: decoder=%s build=%s load_s=%.6f sim_s=%.6f events=%lu\n", parser.GetDecoderName(), build, load_s, sim_s, (long unsigned int)aqtime);
+    printf("TIMING: decoder=%s build=%s header_s=%.6f validate_s=%.6f decoder_init_s=%.6f counters_s=%.6f sim_s=%.6f events=%lu\n",
+           parser.GetDecoderName(), build, parser.timing.header_s, parser.timing.validate_s, parser.timing.decoder_init_s,
+           parser.timing.counters_s, sim_s, (long unsigned int)aqtime);
+  }
+  if (args_info.emit_results_given) {
+    btime_t max_finish = 0;
+    for (uint i = 0; i < p; ++i) max_finish = std::max(max_finish, *(std::max_element(nexto[i].begin(), nexto[i].end())));
+    emit_results(args_info.emit_results_arg, args_info.filename_arg, parser, build, sim_s, (uint64_t) aqtime, max_finish);
   }
 
   // check if all queues are empty!!
