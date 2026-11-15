@@ -27,6 +27,10 @@ add_gengetopt_files(LogGOPSim/txt2bin_cmdline)
 add_re2c_files(LogGOPSim/txt2bin)
 add_executable(txt2bin LogGOPSim/txt2bin.cpp LogGOPSim/txt2bin_cmdline.c)
 
+# build goalx-convert
+add_gengetopt_files(LogGOPSim/goalx_convert_cmdline)
+add_executable(goalx-convert LogGOPSim/goalx_convert.cpp LogGOPSim/goalx_convert_cmdline.c)
+
 # build Schedgen1 (Schedgen2 is pure python)
 add_gengetopt_files(Schedgen/schedgen_cmdline)
 add_executable(schedgen Schedgen/buffer_element.cpp Schedgen/schedgen.cpp Schedgen/process_trace.cpp Schedgen/schedgen_cmdline.c)

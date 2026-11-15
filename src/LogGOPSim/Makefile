@@ -9,13 +9,19 @@ HLPR_OBJECTS= loggopsim_cmdline.o
 ALL_OBJECTS= $(LOGGOPSIM_OBJECTS) $(HLPR_OBJECTS)
 BINARY= LogGOPSim
 
-all: $(ALL_OBJECTS) $(AUTOGEN_SRC) txt2bin
-	$(CXX) $(CXXFLAGS) $(ALL_OBJECTS) -o $(BINARY) $(LDFLAGS)
+all: $(ALL_OBJECTS) $(AUTOGEN_SRC) txt2bin goalx-convert
+	$(CXX) $(CXXFLAGS) $(ALL_OBJECTS) -o $(BINARY) $(LDFLAGS) $(LDLIBS)
 
 txt2bin:
 	re2c -o txt2bin.cpp txt2bin.re
 	gengetopt -F txt2bin_cmdline -i txt2bin_cmdline.ggo
 	$(CXX) -g -O3 txt2bin.cpp txt2bin_cmdline.c -o txt2bin
+
+goalx-convert: goalx_convert.cpp goalx_convert_cmdline.c goalx_convert_cmdline.h $(wildcard *.hpp *.h)
+	$(CXX) $(CXXFLAGS) -O3 goalx_convert.cpp goalx_convert_cmdline.c -o goalx-convert $(LDLIBS)
+
+goalx_convert_cmdline.c goalx_convert_cmdline.h: goalx_convert_cmdline.ggo
+	gengetopt -F goalx_convert_cmdline -i goalx_convert_cmdline.ggo
 
 loggopsim_cmdline.c: loggopsim_cmdline.ggo 
 	gengetopt -F loggopsim_cmdline -i loggopsim_cmdline.ggo
@@ -41,7 +47,7 @@ clean:
 	rm -f $(AUTOGEN_SRC)
 	rm -f $(ALL_OBJECTS)
 	rm -f $(BINARY)
-	rm -f txt2bin.cpp txt2bin bin2txt bin2dot simtest
+	rm -f txt2bin.cpp txt2bin bin2txt bin2dot simtest goalx-convert goalx_convert_cmdline.c goalx_convert_cmdline.h
 	rm -f cmdline_txt2bin.*
 
 # txt2bin has no prerequisites listed: always rebuild it
