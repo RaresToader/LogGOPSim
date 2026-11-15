@@ -49,6 +49,9 @@ goalx-convert: goalx_convert.cpp goalx_convert_cmdline.c goalx_convert_cmdline.h
 goalx_convert_cmdline.c goalx_convert_cmdline.h: goalx_convert_cmdline.ggo
 	gengetopt -F goalx_convert_cmdline -i goalx_convert_cmdline.ggo
 
+liblegacy_plugin.so: ../../examples/decoder_plugin/legacy_plugin.c goalx_decoder.h $(OPT_STAMP)
+	$(CC) -std=c99 $(OPT) -Wall -shared -fPIC -I. ../../examples/decoder_plugin/legacy_plugin.c -o liblegacy_plugin.so
+
 loggopsim_cmdline.c: loggopsim_cmdline.ggo
 	gengetopt -F loggopsim_cmdline -i loggopsim_cmdline.ggo
 
@@ -73,7 +76,7 @@ clean:
 	rm -f $(AUTOGEN_SRC)
 	rm -f $(ALL_OBJECTS)
 	rm -f $(BINARY)
-	rm -f txt2bin.cpp txt2bin bin2txt bin2dot simtest goalx-convert
+	rm -f txt2bin.cpp txt2bin bin2txt bin2dot simtest liblegacy_plugin.so goalx-convert
 	rm -f cmdline_txt2bin.* .opt-* build_info.h build_info.h.tmp
 
 .PHONY: all txt2bin clean FORCE
