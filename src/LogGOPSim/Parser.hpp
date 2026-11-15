@@ -12,6 +12,7 @@
 #include <sys/types.h>
 #include <stddef.h>
 #include <algorithm>
+#include <chrono>
 
 #include "LogGOPSim.hpp"
 #include "TraceSchema.hpp"
@@ -770,24 +771,6 @@ class SerializedGraph {
 		return dec->get_custom(dec, rank_state, record(offset), offset, slot);
 	}
 
-	/* decodes every record of this rank through the decoder table, for measuring decoder throughput */
-	uint64_t DecodeAll() const {
-		uint64_t sum = 0;
-		goalx_op_t op;
-		uint32_t n, ix;
-		for (uint32_t i = 0; i < num_nodes; i++) {
-			const uint8_t* rec = record(i);
-			dec->decode_op(dec, rank_state, rec, i, &op);
-			sum += op.type + op.peer + op.size + op.tag + op.cpu + op.nic;
-			sum += dec->depcnt(dec, rank_state, rec, i);
-			dec->done_edges(dec, rank_state, rec, i, &n, &ix);
-			sum += n + ix;
-			dec->start_edges(dec, rank_state, rec, i, &n, &ix);
-			sum += n + ix;
-		}
-		return sum;
-	}
-
 	void write_as_dot(char *filename) {
 		/** 
 			Produces a dot representation of the graph. This is usefull for debugging purposes.
@@ -1021,14 +1004,23 @@ class Parser {
   typedef std::vector<SerializedGraph> schedules_t ;
 	schedules_t schedules;
 
+	/* seconds spent in each load phase (TIMING line, --emit-results) */
+	struct Timing {
+		double header_s, validate_s, decoder_init_s, counters_s;
+	} timing;
+
 	/*
 	 * reqs: extra fields the simulation needs (custom ones become slots for
 	 * GetCustom, in this order); decoder_name: auto (fixed for legacy traces,
 	 * interp for GOALX), a built-in decoder or plugin:<path>; all_custom:
-	 * every custom field of the trace gets a slot (tools that copy a trace).
+	 * every custom field of the trace gets a slot (tools that copy a trace);
+	 * record_calls: wrap the decoder and write every hot call to this file (benchmarks).
 	 */
 	Parser(char* filename, bool save_mem, const std::vector<Requirement>& reqs, const char* decoder_name = "auto",
-	       bool all_custom = false) {
+	       bool all_custom = false, const char* record_calls = NULL) {
+
+		typedef std::chrono::steady_clock clk;
+		clk::time_point t0 = clk::now();
 		
 		trace_name = filename;
 		schedules_fd = fopen(filename, "r");
@@ -1082,6 +1074,7 @@ class Parser {
 			}
 			schema = Schema::legacy_layout();
 		}
+		clk::time_point t1 = clk::now();
 
 		if (!validate_schema(schema, reqs, num_ranks_in_schedule, max_cpu, max_nic, &err)) fail(filename, err);
 		for (size_t i = 0; i < reqs.size(); i++) {
@@ -1100,6 +1093,7 @@ class Parser {
 			}
 		}
 		if (!holder.set(schema, custom_slots, &err)) fail(filename, err);
+		clk::time_point t2 = clk::now();
 
 		views.resize(num_ranks_in_schedule);
 		schedules.reserve(num_ranks_in_schedule);
@@ -1111,21 +1105,131 @@ class Parser {
 		}
 		trace_view.num_ranks = num_ranks_in_schedule;
 		trace_view.ranks = views.empty() ? NULL : &views[0];
+		clk::time_point t3 = clk::now();
 
 		std::string dname = decoder_name ? decoder_name : "auto";
 		if (dname == "auto") dname = schema.legacy ? "fixed" : "interp";
 		decoder = goalx_create_decoder(dname.c_str(), &holder.schema, &trace_view, &err);
 		if (decoder == NULL) fail(filename, err);
+		if (record_calls != NULL) {
+			for (uint32_t cnt=0; cnt<num_ranks_in_schedule; cnt++) {
+				if (views[cnt].num_nodes >= (1u << 30)) fail(filename, "--record-calls needs fewer than 2^30 nodes per rank");
+			}
+			decoder = goalx_wrap_recording(decoder, record_calls);
+		}
 		rank_states.resize(num_ranks_in_schedule);
 		for (uint32_t cnt=0; cnt<num_ranks_in_schedule; cnt++) {
 			rank_states[cnt] = decoder->bind_rank ? decoder->bind_rank(decoder, &views[cnt]) : NULL;
 			schedules[cnt].Bind(decoder, rank_states[cnt]);
 		}
+		clk::time_point t4 = clk::now();
+		timing.header_s = std::chrono::duration<double>(t1 - t0).count();
+		timing.validate_s = std::chrono::duration<double>(t2 - t1).count();
+		timing.counters_s = std::chrono::duration<double>(t3 - t2).count();
+		timing.decoder_init_s = std::chrono::duration<double>(t4 - t3).count();
+	}
+
+	/* ---- decode-only benchmarks: replay decoder calls without simulating ---- */
+
+	/* every node of every rank in file order, four calls each */
+	std::vector<GoalxCall> SequentialCalls() {
+		std::vector<GoalxCall> calls;
+		for (uint32_t r = 0; r < num_ranks_in_schedule; r++) {
+			for (uint32_t i = 0; i < views[r].num_nodes; i++) {
+				for (uint32_t k = 0; k < 4; k++) calls.push_back(goalx_call(r, i, k));
+			}
+		}
+		return calls;
+	}
+
+	/* false (with a message) if a recorded call does not fit this trace */
+	bool CheckCalls(const std::vector<GoalxCall>& calls, std::string* err) {
+		for (size_t i = 0; i < calls.size(); i++) {
+			uint32_t r = calls[i].rank, idx = calls[i].idx_and_kind & 0x3FFFFFFFu;
+			if (r >= num_ranks_in_schedule || idx >= views[r].num_nodes) {
+				*err = "recorded call " + std::to_string(i) + " (rank " + std::to_string(r) + ", node " + std::to_string(idx) +
+				       ") does not fit this trace";
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/* replays calls through the decoder's table (as the simulator calls it); returns a checksum */
+	uint64_t Replay(const std::vector<GoalxCall>& calls) {
+		struct Table {
+			const goalx_decoder_t* d;
+			void op(void* rs, const uint8_t* rec, uint32_t i, goalx_op_t* o) const { d->decode_op(d, rs, rec, i, o); }
+			uint32_t cnt(void* rs, const uint8_t* rec, uint32_t i) const { return d->depcnt(d, rs, rec, i); }
+			void done(void* rs, const uint8_t* rec, uint32_t i, uint32_t* n, uint32_t* x) const { d->done_edges(d, rs, rec, i, n, x); }
+			void start(void* rs, const uint8_t* rec, uint32_t i, uint32_t* n, uint32_t* x) const { d->start_edges(d, rs, rec, i, n, x); }
+		} t = { decoder };
+		return replay(calls, t);
+	}
+
+	/* the same with the built-in interp or fixed functions called directly, so the compiler can inline them */
+	bool CanReplayInline() {
+		return strcmp(decoder->name, "interp") == 0 || strcmp(decoder->name, "fixed") == 0;
+	}
+
+	uint64_t ReplayInline(const std::vector<GoalxCall>& calls) {
+		struct Interp {
+			const goalx_decoder_t* d;
+			void op(void* rs, const uint8_t* rec, uint32_t i, goalx_op_t* o) const { goalx_interp_decode_op(d, rs, rec, i, o); }
+			uint32_t cnt(void* rs, const uint8_t* rec, uint32_t i) const { return goalx_interp_depcnt(d, rs, rec, i); }
+			void done(void* rs, const uint8_t* rec, uint32_t i, uint32_t* n, uint32_t* x) const { goalx_interp_done(d, rs, rec, i, n, x); }
+			void start(void* rs, const uint8_t* rec, uint32_t i, uint32_t* n, uint32_t* x) const { goalx_interp_start(d, rs, rec, i, n, x); }
+		};
+		struct Fixed {
+			const goalx_decoder_t* d;
+			void op(void* rs, const uint8_t* rec, uint32_t i, goalx_op_t* o) const { goalx_fixed_decode_op(d, rs, rec, i, o); }
+			uint32_t cnt(void* rs, const uint8_t* rec, uint32_t i) const { return goalx_fixed_depcnt(d, rs, rec, i); }
+			void done(void* rs, const uint8_t* rec, uint32_t i, uint32_t* n, uint32_t* x) const { goalx_fixed_done(d, rs, rec, i, n, x); }
+			void start(void* rs, const uint8_t* rec, uint32_t i, uint32_t* n, uint32_t* x) const { goalx_fixed_start(d, rs, rec, i, n, x); }
+		};
+		if (strcmp(decoder->name, "fixed") == 0) {
+			Fixed f = { decoder };
+			return replay(calls, f);
+		}
+		Interp in = { decoder };
+		return replay(calls, in);
 	}
 
 	private:
 
 	std::vector<void*> rank_states;
+
+	template <typename D>
+	uint64_t replay(const std::vector<GoalxCall>& calls, const D& dec) {
+		uint64_t sum = 0;
+		const size_t rb = schema.record_bytes;
+		goalx_op_t op;
+		uint32_t n, ix;
+		for (size_t c = 0; c < calls.size(); c++) {
+			uint32_t r = calls[c].rank;
+			uint32_t idx = calls[c].idx_and_kind & 0x3FFFFFFFu;
+			const uint8_t* rec = views[r].records + rb * idx;
+			void* rs = rank_states[r];
+			switch (calls[c].idx_and_kind >> 30) {
+				case GOALX_CALL_DECODE_OP:
+					dec.op(rs, rec, idx, &op);
+					sum += op.type + op.peer + op.size + op.tag + op.cpu + op.nic;
+					break;
+				case GOALX_CALL_DEPCNT:
+					sum += dec.cnt(rs, rec, idx);
+					break;
+				case GOALX_CALL_DONE_EDGES:
+					dec.done(rs, rec, idx, &n, &ix);
+					sum += n + ix;
+					break;
+				default:
+					dec.start(rs, rec, idx, &n, &ix);
+					sum += n + ix;
+					break;
+			}
+		}
+		return sum;
+	}
 
 	public:
 
