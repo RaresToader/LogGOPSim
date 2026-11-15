@@ -3,6 +3,11 @@ CXXFLAGS= -std=c++11 -O0 -g -pedantic -Wno-deprecated -Wall -Wno-long-long -I/op
 CCFLAGS= -O0 -g 
 LDFLAGS= -L/opt/homebrew/lib/ -lcgraph -g
 
+# dlopen for --decoder plugin:<path.so>
+ifeq ($(shell uname -s),Linux)
+LDLIBS += -ldl
+endif
+
 AUTOGEN_SRC= loggopsim_cmdline.c loggopsim_cmdline.h txt2bin_cmdline.h txt2bin_cmdline.c  
 LOGGOPSIM_OBJECTS= LogGOPSim.o 
 HLPR_OBJECTS= loggopsim_cmdline.o 
@@ -19,6 +24,9 @@ txt2bin:
 
 goalx-convert: goalx_convert.cpp goalx_convert_cmdline.c goalx_convert_cmdline.h $(wildcard *.hpp *.h)
 	$(CXX) $(CXXFLAGS) -O3 goalx_convert.cpp goalx_convert_cmdline.c -o goalx-convert $(LDLIBS)
+
+liblegacy_plugin.so: ../../examples/decoder_plugin/legacy_plugin.c goalx_decoder.h
+	$(CC) -std=c99 -g -O3 -Wall -shared -fPIC -I. ../../examples/decoder_plugin/legacy_plugin.c -o liblegacy_plugin.so
 
 goalx_convert_cmdline.c goalx_convert_cmdline.h: goalx_convert_cmdline.ggo
 	gengetopt -F goalx_convert_cmdline -i goalx_convert_cmdline.ggo
@@ -37,7 +45,7 @@ txt2bin_cmdline.h: txt2bin_cmdline.ggo
 
 
 
-%.o: %.cpp $(AUTOGEN_SRC) *.hpp 
+%.o: %.cpp $(AUTOGEN_SRC) *.hpp *.h
 	$(CXX) $(CXXFLAGS) -c $<
 
 %.o: %.c $(AUTOGEN_SRC) *.h
@@ -47,7 +55,7 @@ clean:
 	rm -f $(AUTOGEN_SRC)
 	rm -f $(ALL_OBJECTS)
 	rm -f $(BINARY)
-	rm -f txt2bin.cpp txt2bin bin2txt bin2dot simtest goalx-convert goalx_convert_cmdline.c goalx_convert_cmdline.h
+	rm -f txt2bin.cpp txt2bin bin2txt bin2dot simtest goalx-convert liblegacy_plugin.so goalx_convert_cmdline.c goalx_convert_cmdline.h
 	rm -f cmdline_txt2bin.*
 
 # txt2bin has no prerequisites listed: always rebuild it

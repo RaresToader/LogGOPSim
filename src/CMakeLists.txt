@@ -30,6 +30,7 @@ add_executable(txt2bin LogGOPSim/txt2bin.cpp LogGOPSim/txt2bin_cmdline.c)
 # build goalx-convert
 add_gengetopt_files(LogGOPSim/goalx_convert_cmdline)
 add_executable(goalx-convert LogGOPSim/goalx_convert.cpp LogGOPSim/goalx_convert_cmdline.c)
+target_link_libraries(goalx-convert ${CMAKE_DL_LIBS})
 
 # build Schedgen1 (Schedgen2 is pure python)
 add_gengetopt_files(Schedgen/schedgen_cmdline)
@@ -77,6 +78,12 @@ add_test(NAME loggopsim_binomialtreebcast COMMAND LogGOPSim -f schedule.bin DEPE
 add_test(NAME schedgen2_bcast COMMAND ${PYTHON_EXECUTABLE} schedgen.py bcast --output schedule.goal WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/Schedgen2)
 add_test(NAME txt2bin_schedgen2_bcast COMMAND txt2bin -i ${PROJECT_SOURCE_DIR}/Schedgen2/schedule.goal -o schedule.bin)
 add_test(NAME loggopsim_schedgen2_bcast COMMAND LogGOPSim -f schedule.bin)
+
+# example decoder plugin (for JIT / template decoders) and dlopen support
+add_library(legacy_plugin MODULE ${PROJECT_SOURCE_DIR}/../examples/decoder_plugin/legacy_plugin.c)
+target_include_directories(legacy_plugin PRIVATE ${PROJECT_SOURCE_DIR}/LogGOPSim)
+set_target_properties(legacy_plugin PROPERTIES PREFIX "lib" SUFFIX ".so" OUTPUT_NAME legacy_plugin)
+target_link_libraries(LogGOPSim ${CMAKE_DL_LIBS})
 
 # test the self-describing GOALX format: legacy and GOALX must simulate identically
 set(GOALX_TESTS ${PROJECT_SOURCE_DIR}/../tests)
