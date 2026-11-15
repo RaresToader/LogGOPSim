@@ -10,6 +10,9 @@
  *                   on the field kind for every call (reference point)
  *   fixed           the original hand-written decoder, constant offsets into
  *                   the 39-byte legacy record (legacy traces only)
+ *   free            decodes every record once at load into flat arrays and
+ *                   serves all calls from them: an upper bound on what any
+ *                   decoder could gain (O(nodes) memory, for measurements)
  *
  * plus a registry for decoders compiled into the simulator and a loader for
  * plugin shared objects.
@@ -336,6 +339,95 @@ static goalx_decoder_t* goalx_make_fixed(const goalx_schema_t* s, const goalx_tr
 	return d;
 }
 
+/* ------------------------------------------------------------------ free */
+
+struct GoalxFreeRank {
+	std::vector<goalx_op_t> ops;
+	std::vector<uint32_t> depcnt, ndep, depix, nsdep, sdepix;
+	std::vector<uint64_t> custom; // num_nodes * num_custom
+};
+
+struct GoalxFreeState {
+	goalx_decoder_t* interp;
+	uint16_t record_bytes;
+	uint16_t num_custom;
+	std::vector<GoalxFreeRank*> ranks;
+};
+
+#define GOALX_FR(rs) ((const GoalxFreeRank*) (rs))
+
+/* decodes the whole rank once with interp; every later call is an array lookup */
+static void* goalx_free_bind(goalx_decoder_t* d, const goalx_rank_view_t* v) {
+	GoalxFreeState* S = (GoalxFreeState*) d->state;
+	const goalx_decoder_t* in = S->interp;
+	GoalxFreeRank* R = new GoalxFreeRank;
+	uint32_t n = v->num_nodes;
+	R->ops.resize(n);
+	R->depcnt.resize(n); R->ndep.resize(n); R->depix.resize(n); R->nsdep.resize(n); R->sdepix.resize(n);
+	R->custom.resize((size_t) n * S->num_custom);
+	for (uint32_t i = 0; i < n; i++) {
+		const uint8_t* rec = v->records + (size_t) i * S->record_bytes;
+		in->decode_op(in, NULL, rec, i, &R->ops[i]);
+		R->depcnt[i] = in->depcnt(in, NULL, rec, i);
+		in->done_edges(in, NULL, rec, i, &R->ndep[i], &R->depix[i]);
+		uint32_t ns, sx;
+		in->start_edges(in, NULL, rec, i, &ns, &sx);
+		R->nsdep[i] = ns;
+		R->sdepix[i] = sx;
+		for (uint16_t c = 0; c < S->num_custom; c++) R->custom[(size_t) i * S->num_custom + c] = in->get_custom(in, NULL, rec, i, c);
+	}
+	S->ranks.push_back(R);
+	return R;
+}
+
+static void goalx_free_decode_op(const goalx_decoder_t*, void* rs, const uint8_t*, uint32_t idx, goalx_op_t* o) {
+	*o = GOALX_FR(rs)->ops[idx];
+}
+
+static uint32_t goalx_free_depcnt(const goalx_decoder_t*, void* rs, const uint8_t*, uint32_t idx) {
+	return GOALX_FR(rs)->depcnt[idx];
+}
+
+static void goalx_free_done(const goalx_decoder_t*, void* rs, const uint8_t*, uint32_t idx, uint32_t* n, uint32_t* ix) {
+	*n = GOALX_FR(rs)->ndep[idx];
+	*ix = GOALX_FR(rs)->depix[idx];
+}
+
+static void goalx_free_start(const goalx_decoder_t*, void* rs, const uint8_t*, uint32_t idx, uint32_t* n, uint32_t* ix) {
+	*n = GOALX_FR(rs)->nsdep[idx];
+	*ix = GOALX_FR(rs)->sdepix[idx];
+}
+
+static uint64_t goalx_free_custom(const goalx_decoder_t* d, void* rs, const uint8_t*, uint32_t idx, uint16_t slot) {
+	const GoalxFreeState* S = (const GoalxFreeState*) d->state;
+	return GOALX_FR(rs)->custom[(size_t) idx * S->num_custom + slot];
+}
+
+static void goalx_free_destroy(goalx_decoder_t* d) {
+	GoalxFreeState* S = (GoalxFreeState*) d->state;
+	for (size_t i = 0; i < S->ranks.size(); i++) delete S->ranks[i];
+	S->interp->destroy(S->interp);
+	delete S;
+	delete d;
+}
+
+static goalx_decoder_t* goalx_make_free(const goalx_schema_t* s, const goalx_trace_view_t* t) {
+	GoalxFreeState* S = new GoalxFreeState;
+	S->interp = goalx_make_interp(s, t);
+	S->record_bytes = s->record_bytes;
+	S->num_custom = s->num_custom;
+	goalx_decoder_t* d = goalx_new_table("free");
+	d->state = S;
+	d->bind_rank = goalx_free_bind;
+	d->decode_op = goalx_free_decode_op;
+	d->depcnt = goalx_free_depcnt;
+	d->done_edges = goalx_free_done;
+	d->start_edges = goalx_free_start;
+	d->get_custom = goalx_free_custom;
+	d->destroy = goalx_free_destroy;
+	return d;
+}
+
 /* -------------------------------------------------- registry and loading */
 
 typedef std::vector<std::pair<std::string, goalx_decoder_factory_t> > GoalxRegistry;
@@ -352,7 +444,7 @@ static inline void goalx_register_decoder(const char* name, goalx_decoder_factor
 
 /*
  * Creates the decoder called name for a trace: a registered one, a built-in
- * (interp, interp-generic, fixed) or plugin:<path.so>. Returns NULL and
+ * (interp, interp-generic, fixed, free) or plugin:<path.so>. Returns NULL and
  * sets err if that is impossible. A plugin that declines the schema is
  * replaced by interp, with a notice on stderr.
  */
@@ -371,6 +463,7 @@ static inline goalx_decoder_t* goalx_create_decoder(const char* name, const goal
 	}
 	if (n == "interp") return goalx_make_interp(s, t);
 	if (n == "interp-generic") return goalx_make_generic(s, t);
+	if (n == "free") return goalx_make_free(s, t);
 	if (n == "fixed") {
 		if (!s->legacy) {
 			*err = "the fixed decoder only reads legacy (4223) traces";
@@ -412,10 +505,115 @@ static inline goalx_decoder_t* goalx_create_decoder(const char* name, const goal
 		}
 		return d;
 	}
-	*err = "unknown decoder '" + n + "' (known: auto, interp, interp-generic, fixed, plugin:<path>";
+	*err = "unknown decoder '" + n + "' (known: auto, interp, interp-generic, fixed, free, plugin:<path>";
 	for (size_t i = 0; i < reg.size(); i++) *err += ", " + reg[i].first;
 	*err += ")";
 	return NULL;
+}
+
+/* --------------------------------------------- recording (benchmarks) */
+
+/* one recorded decoder call: kind in the top 2 bits of idx_and_kind */
+struct GoalxCall {
+	uint32_t rank;
+	uint32_t idx_and_kind;
+};
+
+enum { GOALX_CALL_DECODE_OP = 0, GOALX_CALL_DEPCNT = 1, GOALX_CALL_DONE_EDGES = 2, GOALX_CALL_START_EDGES = 3 };
+
+static inline GoalxCall goalx_call(uint32_t rank, uint32_t idx, uint32_t kind) {
+	GoalxCall c;
+	c.rank = rank;
+	c.idx_and_kind = idx | (kind << 30);
+	return c;
+}
+
+struct GoalxRecordRank {
+	uint32_t rank;
+	void* inner_rs;
+};
+
+struct GoalxRecordState {
+	goalx_decoder_t* inner;
+	std::string path;
+	std::string name;
+	std::vector<GoalxCall> calls;
+	std::vector<GoalxRecordRank*> ranks;
+};
+
+#define GOALX_RS(d) ((GoalxRecordState*) (d)->state)
+#define GOALX_RR(rs) ((const GoalxRecordRank*) (rs))
+
+static void* goalx_record_bind(goalx_decoder_t* d, const goalx_rank_view_t* v) {
+	GoalxRecordState* S = GOALX_RS(d);
+	GoalxRecordRank* R = new GoalxRecordRank;
+	R->rank = v->rank;
+	R->inner_rs = S->inner->bind_rank ? S->inner->bind_rank(S->inner, v) : NULL;
+	S->ranks.push_back(R);
+	return R;
+}
+
+static void goalx_record_decode_op(const goalx_decoder_t* d, void* rs, const uint8_t* rec, uint32_t idx, goalx_op_t* o) {
+	GoalxRecordState* S = GOALX_RS(d);
+	S->calls.push_back(goalx_call(GOALX_RR(rs)->rank, idx, GOALX_CALL_DECODE_OP));
+	S->inner->decode_op(S->inner, GOALX_RR(rs)->inner_rs, rec, idx, o);
+}
+
+static uint32_t goalx_record_depcnt(const goalx_decoder_t* d, void* rs, const uint8_t* rec, uint32_t idx) {
+	GoalxRecordState* S = GOALX_RS(d);
+	S->calls.push_back(goalx_call(GOALX_RR(rs)->rank, idx, GOALX_CALL_DEPCNT));
+	return S->inner->depcnt(S->inner, GOALX_RR(rs)->inner_rs, rec, idx);
+}
+
+static void goalx_record_done(const goalx_decoder_t* d, void* rs, const uint8_t* rec, uint32_t idx, uint32_t* n, uint32_t* ix) {
+	GoalxRecordState* S = GOALX_RS(d);
+	S->calls.push_back(goalx_call(GOALX_RR(rs)->rank, idx, GOALX_CALL_DONE_EDGES));
+	S->inner->done_edges(S->inner, GOALX_RR(rs)->inner_rs, rec, idx, n, ix);
+}
+
+static void goalx_record_start(const goalx_decoder_t* d, void* rs, const uint8_t* rec, uint32_t idx, uint32_t* n, uint32_t* ix) {
+	GoalxRecordState* S = GOALX_RS(d);
+	S->calls.push_back(goalx_call(GOALX_RR(rs)->rank, idx, GOALX_CALL_START_EDGES));
+	S->inner->start_edges(S->inner, GOALX_RR(rs)->inner_rs, rec, idx, n, ix);
+}
+
+static uint64_t goalx_record_custom(const goalx_decoder_t* d, void* rs, const uint8_t* rec, uint32_t idx, uint16_t slot) {
+	GoalxRecordState* S = GOALX_RS(d);
+	return S->inner->get_custom(S->inner, GOALX_RR(rs)->inner_rs, rec, idx, slot);
+}
+
+/* writes the recorded calls, then frees everything */
+static void goalx_record_destroy(goalx_decoder_t* d) {
+	GoalxRecordState* S = GOALX_RS(d);
+	FILE* f = fopen(S->path.c_str(), "wb");
+	if (f == NULL || (!S->calls.empty() && fwrite(&S->calls[0], sizeof(GoalxCall), S->calls.size(), f) != S->calls.size())) {
+		perror(S->path.c_str());
+	}
+	if (f) fclose(f);
+	for (size_t i = 0; i < S->ranks.size(); i++) delete S->ranks[i];
+	S->inner->destroy(S->inner);
+	delete S;
+	delete d;
+}
+
+/* wraps a decoder so that every hot call is recorded; the log is written to path on destroy */
+static inline goalx_decoder_t* goalx_wrap_recording(goalx_decoder_t* inner, const char* path) {
+	GoalxRecordState* S = new GoalxRecordState;
+	S->inner = inner;
+	S->path = path;
+	S->name = std::string("record:") + inner->name;
+	S->calls.reserve(1 << 20);
+	goalx_decoder_t* d = goalx_new_table("record");
+	d->name = S->name.c_str();
+	d->state = S;
+	d->bind_rank = goalx_record_bind;
+	d->decode_op = goalx_record_decode_op;
+	d->depcnt = goalx_record_depcnt;
+	d->done_edges = goalx_record_done;
+	d->start_edges = goalx_record_start;
+	d->get_custom = goalx_record_custom;
+	d->destroy = goalx_record_destroy;
+	return d;
 }
 
 #endif

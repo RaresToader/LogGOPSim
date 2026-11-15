@@ -20,6 +20,13 @@ find_package(Graphviz REQUIRED)
 include_directories(${GRAPHVIZ_INCLUDE_DIRS})
 add_gengetopt_files(LogGOPSim/loggopsim_cmdline)
 add_executable(LogGOPSim LogGOPSim/loggopsim_cmdline.c LogGOPSim/LogGOPSim.cpp)
+# commit baked into LogGOPSim for --emit-results (read when CMake configures; "unknown" without git)
+execute_process(COMMAND git describe --always --dirty --abbrev=7 WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+                OUTPUT_VARIABLE GOALX_GIT_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(NOT GOALX_GIT_COMMIT)
+  set(GOALX_GIT_COMMIT unknown)
+endif()
+target_compile_definitions(LogGOPSim PRIVATE GOALX_BUILD_COMMIT="${GOALX_GIT_COMMIT}" GOALX_BUILD_FLAGS="${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
 target_link_libraries(LogGOPSim ${GRAPHVIZ_CGRAPH_LIBRARY})
 
 # build txt2bin

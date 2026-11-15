@@ -2,3 +2,13 @@ __pycache__
 *_cmdline.c
 *_cmdline.h
 src/LogGOPSim/txt2bin.cpp
+
+# build outputs of src/LogGOPSim/Makefile
+src/LogGOPSim/*.o
+src/LogGOPSim/LogGOPSim
+src/LogGOPSim/txt2bin
+src/LogGOPSim/goalx-convert
+src/LogGOPSim/*.so
+src/LogGOPSim/.opt-*
+src/LogGOPSim/build_info.h*
+*.dSYM/
