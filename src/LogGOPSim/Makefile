@@ -25,6 +25,9 @@ txt2bin:
 goalx-convert: goalx_convert.cpp goalx_convert_cmdline.c goalx_convert_cmdline.h $(wildcard *.hpp *.h)
 	$(CXX) $(CXXFLAGS) -O3 goalx_convert.cpp goalx_convert_cmdline.c -o goalx-convert $(LDLIBS)
 
+liblegacy_plugin.so: ../../examples/decoder_plugin/legacy_plugin.c goalx_decoder.h
+	$(CC) -std=c99 -g -O3 -Wall -shared -fPIC -I. ../../examples/decoder_plugin/legacy_plugin.c -o liblegacy_plugin.so
+
 goalx_convert_cmdline.c goalx_convert_cmdline.h: goalx_convert_cmdline.ggo
 	gengetopt -F goalx_convert_cmdline -i goalx_convert_cmdline.ggo
 
@@ -52,7 +55,7 @@ clean:
 	rm -f $(AUTOGEN_SRC)
 	rm -f $(ALL_OBJECTS)
 	rm -f $(BINARY)
-	rm -f txt2bin.cpp txt2bin bin2txt bin2dot simtest goalx-convert goalx_convert_cmdline.c goalx_convert_cmdline.h
+	rm -f txt2bin.cpp txt2bin bin2txt bin2dot simtest goalx-convert liblegacy_plugin.so goalx_convert_cmdline.c goalx_convert_cmdline.h
 	rm -f cmdline_txt2bin.*
 
 # txt2bin has no prerequisites listed: always rebuild it

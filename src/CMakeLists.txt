@@ -79,7 +79,10 @@ add_test(NAME schedgen2_bcast COMMAND ${PYTHON_EXECUTABLE} schedgen.py bcast --o
 add_test(NAME txt2bin_schedgen2_bcast COMMAND txt2bin -i ${PROJECT_SOURCE_DIR}/Schedgen2/schedule.goal -o schedule.bin)
 add_test(NAME loggopsim_schedgen2_bcast COMMAND LogGOPSim -f schedule.bin)
 
-# dlopen for --decoder plugin:<path.so>
+# example decoder plugin (for JIT / template decoders) and dlopen support
+add_library(legacy_plugin MODULE ${PROJECT_SOURCE_DIR}/../examples/decoder_plugin/legacy_plugin.c)
+target_include_directories(legacy_plugin PRIVATE ${PROJECT_SOURCE_DIR}/LogGOPSim)
+set_target_properties(legacy_plugin PROPERTIES PREFIX "lib" SUFFIX ".so" OUTPUT_NAME legacy_plugin)
 target_link_libraries(LogGOPSim ${CMAKE_DL_LIBS})
 
 # test the self-describing GOALX format: legacy and GOALX must simulate identically
