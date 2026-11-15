@@ -50,6 +50,8 @@ typedef struct Item {
 	uint64_t tag;
 	uint64_t cpu;
 	uint64_t nic;
+	// custom attributes in the order they appear: name, value
+	std::vector<std::pair<std::string, uint64_t> > custom;
 } Item;
 
 enum OpTypes {
@@ -116,6 +118,7 @@ void process_item(Scanner *s, Item *item) {
 		exit(EXIT_FAILURE);
 	}
 
+	op = NULL;
 	switch (item->type) {
 		case Undefined:
 			fprintf(stderr, "Error while parsing, attempt to add a undefined operation\n");
@@ -149,6 +152,9 @@ void process_item(Scanner *s, Item *item) {
 			break;
 		default:
 			break;
+	}
+	for (size_t i = 0; i < item->custom.size(); i++) {
+		s->schedule->Custom(op, item->custom[i].first, item->custom[i].second, s->line);
 	}
 }
 
@@ -226,12 +232,16 @@ uchar *fill(Scanner *s, uchar *cursor, int numtoread) {
 }
 */
 
+// the scanner position survives between scan() calls (one call per rank); reset for a second pass
+static uchar *scan_cursor = NULL;
+
 int scan(Scanner *s) {
 
 	//uchar *cursor = s->cur;
 
-	static uchar *cursor = NULL;
+	uchar*& cursor = scan_cursor;
 	Item item;
+	std::string cname; // name of the custom attribute being parsed
 	int state;
 
 	for (;;) {
@@ -255,6 +265,7 @@ s_0:
 	item.cpu = 0;
 	item.nic = 0;
 	item.tag = 0;
+	item.custom.clear();
 
 /*!re2c
 	re2c:indent:top = 2;
@@ -386,10 +397,13 @@ s_7:
 	state = 7;
 	// printf("Entered s_7\n");
 
+	s->tok = cursor;
+
 /*!re2c
 	WS			{ goto s_7; }
 	CPU			{ goto s_8; }
 	NL			{ s->line++; process_item(s, &item); continue; }
+	IDENT		{ cname.assign((char*) s->tok, cursor - s->tok); goto s_25; }
 	ANY			{ goto s_err; }
 */
 
@@ -413,9 +427,12 @@ s_9:
 	state=9;
 	// printf("Entered s_9\n");
 
+	s->tok = cursor;
+
 /*!re2c
 	WS			{ goto s_9; }
 	NL			{ s->line++; process_item(s, &item); continue; }
+	IDENT		{ cname.assign((char*) s->tok, cursor - s->tok); goto s_25; }
 	ANY			{ goto s_err; }
 */
 
@@ -465,12 +482,15 @@ s_13:
 	state = 13;
 	// printf("Entered s_13\n");
 
+	s->tok = cursor;
+
 /*!re2c
 	WS			{ goto s_13; }
 	TAG			{ goto s_14; }
 	CPU			{ goto s_16; }
 	NIC			{ goto s_18; }
 	NL			{ s->line++; process_item(s, &item); continue; }
+	IDENT		{ cname.assign((char*) s->tok, cursor - s->tok); goto s_25; }
 	ANY			{ goto s_err; }
 */
 
@@ -495,11 +515,14 @@ s_15:
 	state =15;
 	// printf("Entered s_15\n");
 
+	s->tok = cursor;
+
 /*!re2c
 	WS			{ goto s_15; }
 	CPU			{ goto s_16; }
 	NIC			{ goto s_18; }
 	NL			{ s->line++; process_item(s, &item); continue; }
+	IDENT		{ cname.assign((char*) s->tok, cursor - s->tok); goto s_25; }
 	ANY			{ goto s_err; }
 */
 
@@ -523,10 +546,13 @@ s_17:
 	state = 17;
 	// printf("Entered s_17\n");
 	
+	s->tok = cursor;
+
 /*!re2c
 	WS			{ goto s_17; }
 	NIC			{ goto s_18; }
 	NL			{ s->line++; process_item(s, &item); continue; }
+	IDENT		{ cname.assign((char*) s->tok, cursor - s->tok); goto s_25; }
 	ANY			{ goto s_err; }
 */
 
@@ -550,9 +576,12 @@ s_19:
 	state = 19;
 	// printf("Entered s_19\n");
 
+	s->tok = cursor;
+
 /*!re2c
 	WS			{ goto s_19; }
 	NL			{ s->line++; process_item(s, &item); continue; }
+	IDENT		{ cname.assign((char*) s->tok, cursor - s->tok); goto s_25; }
 	ANY			{ goto s_err; }
 */
 
@@ -621,6 +650,35 @@ s_24:
 
 	assert(0==1); //We should never reach this line
 	
+s_25:
+	state = 25;
+	// a custom attribute's value
+
+	s->tok = cursor;
+
+/*!re2c
+	WS			{ goto s_25; }
+	INT			{ item.custom.push_back(std::make_pair(cname, add_number(s->tok, cursor))); goto s_26; }
+	ANY			{ goto s_err; }
+*/
+
+	assert(0==1); //We should never reach this line
+
+s_26:
+	state = 26;
+	// after a custom attribute: another one or the end of the line
+
+	s->tok = cursor;
+
+/*!re2c
+	WS			{ goto s_26; }
+	IDENT		{ cname.assign((char*) s->tok, cursor - s->tok); goto s_25; }
+	NL			{ s->line++; process_item(s, &item); continue; }
+	ANY			{ goto s_err; }
+*/
+
+	assert(0==1); //We should never reach this line
+
 s_err:
 
 	fprintf(stderr, "Error in line %i:\n", s->line);
@@ -729,6 +787,12 @@ s_err:
 		case 22:
 			fprintf(stderr,"Expected: an integer\n");
 			break;
+		case 25:
+			fprintf(stderr,"Expected: an integer (the value of custom attribute '%s')\n", cname.c_str());
+			break;
+		case 26:
+			fprintf(stderr,"Expected: a custom attribute or \"\\n\"\n");
+			break;
 	}
 	
 	if (*(cursor-1) == '\n') {
@@ -745,56 +809,39 @@ s_err:
 }
 }
 
-int main(int argc, char **argv){
-    
+/* the output file of a write pass that has not finished; removed if txt2bin exits early */
+static const char* partial_output = NULL;
+
+static void remove_partial_output() {
+	if (partial_output != NULL) unlink(partial_output);
+}
+
+static void open_input(Scanner* in, const char* path) {
+	memset((char*) in, 0, sizeof(*in));
+	in->fd = fopen(path, "r");
+	if (in->fd == NULL) {
+		fprintf(stderr, "Couldn't open input file %s!\n", path);
+		exit(EXIT_FAILURE);
+	}
+	in->idtbl = new std::map<std::string, goalop_t>;
+	scan_cursor = NULL;
+}
+
+static void close_input(Scanner* in) {
+	free(in->bot);
+	fclose(in->fd);
+	delete in->idtbl;
+}
+
+/* parses the whole GOAL file once, rank by rank, in the given mode */
+static void run_pass(const char* input, GoalMode mode, const Schema* schema, FieldStats* stats, CustomNames* names) {
 	Scanner in;
 	int lastprogress = 0;
-
-	if (cmdline_parser(argc, argv, &args_info) != 0) {
-		fprintf(stderr, "Couldn't parse command line arguments!\n");
-		exit(EXIT_FAILURE);
-	}
-
-    memset((char*) &in, 0, sizeof(in));
-   	in.fd = fopen(args_info.input_arg, "r");
-	if (in.fd == NULL) {
-		fprintf(stderr, "Couldn't open input file %s!\n", args_info.input_arg);
-		exit(EXIT_FAILURE);
-	}
-	in.idtbl = new std::map<std::string, goalop_t>;
-    
-	uint32_t numranks = -1;
-
-	Schema schema;
-	bool goalx = strcmp(args_info.format_arg, "goalx") == 0;
-	if (!goalx && (args_info.schema_given || args_info.meta_given)) {
-		fprintf(stderr, "--schema and --meta require --format goalx\n");
-		exit(EXIT_FAILURE);
-	}
-	if (goalx) {
-		std::string err;
-		if (!Schema::from_spec(args_info.schema_arg, &schema, &err)) {
-			fprintf(stderr, "Invalid --schema: %s\n", err.c_str());
-			exit(EXIT_FAILURE);
-		}
-		schema.meta.push_back(std::make_pair(std::string("producer"), std::string("txt2bin")));
-		schema.meta.push_back(std::make_pair(std::string("source"), std::string(args_info.input_arg)));
-		for (unsigned int i = 0; i < args_info.meta_given; i++) {
-			std::string kv = args_info.meta_arg[i];
-			size_t eq = kv.find('=');
-			if (eq == std::string::npos || eq == 0) {
-				fprintf(stderr, "Invalid --meta '%s', expected key=value\n", kv.c_str());
-				exit(EXIT_FAILURE);
-			}
-			schema.meta.push_back(std::make_pair(kv.substr(0, eq), kv.substr(eq + 1)));
-		}
-	}
-
+	open_input(&in, input);
 	while (true) {
-		
 		in.schedule = new Goal;
-		if (goalx) in.schedule->SetSchema(&schema);
-		
+		in.schedule->SetMode(mode, schema, stats, names);
+
 		scan(&in);
 
 		if (in.num_ranks < 1) {
@@ -811,11 +858,68 @@ int main(int argc, char **argv){
 		int newprogress = round((((double) in.curr_rank) / in.num_ranks)*100);
 		if (args_info.progress_given && (newprogress > lastprogress) ) {
 			lastprogress = newprogress;
-			printf("Progress %i%% - parsed schedule %i/%i\n", lastprogress, in.curr_rank, in.num_ranks);
+			printf("Progress %i%% - %s schedule %i/%i\n", lastprogress,
+			       mode == GOAL_COLLECT_STATS ? "scanned" : "wrote", in.curr_rank, in.num_ranks);
 		}
 		if (in.curr_rank+1 == in.num_ranks) break;
 	}
-	
-	free(in.bot);
+	close_input(&in);
+}
+
+int main(int argc, char **argv){
+
+	if (cmdline_parser(argc, argv, &args_info) != 0) {
+		fprintf(stderr, "Couldn't parse command line arguments!\n");
+		exit(EXIT_FAILURE);
+	}
+	atexit(remove_partial_output);
+
+	bool goalx = strcmp(args_info.format_arg, "goalx") == 0;
+	if (!goalx && (args_info.schema_given || args_info.meta_given || args_info.layout_given)) {
+		fprintf(stderr, "--schema, --layout and --meta require --format goalx\n");
+		exit(EXIT_FAILURE);
+	}
+
+	if (!goalx) {
+		partial_output = args_info.output_arg;
+		run_pass(args_info.input_arg, GOAL_WRITE_LEGACY, NULL, NULL, NULL);
+		partial_output = NULL;
+		exit(EXIT_SUCCESS);
+	}
+
+	std::string err;
+	SchemaSpec spec;
+	if (!Schema::parse_spec(args_info.schema_arg, &spec, &err)) {
+		fprintf(stderr, "Invalid --schema: %s\n", err.c_str());
+		exit(EXIT_FAILURE);
+	}
+
+	// first pass: the maxima every field must hold; widths are chosen from them
+	FieldStats stats;
+	CustomNames names;
+	run_pass(args_info.input_arg, GOAL_COLLECT_STATS, NULL, &stats, &names);
+
+	Schema schema;
+	Layout layout = strcmp(args_info.layout_arg, "aligned") == 0 ? LAYOUT_ALIGNED : LAYOUT_PACKED;
+	if (!Schema::build(spec, stats, layout, &schema, &err)) {
+		fprintf(stderr, "Error: %s\n", err.c_str());
+		exit(EXIT_FAILURE);
+	}
+	schema.meta.push_back(std::make_pair(std::string("producer"), std::string("txt2bin")));
+	schema.meta.push_back(std::make_pair(std::string("source"), std::string(args_info.input_arg)));
+	for (unsigned int i = 0; i < args_info.meta_given; i++) {
+		std::string kv = args_info.meta_arg[i];
+		size_t eq = kv.find('=');
+		if (eq == std::string::npos || eq == 0) {
+			fprintf(stderr, "Invalid --meta '%s', expected key=value\n", kv.c_str());
+			exit(EXIT_FAILURE);
+		}
+		schema.meta.push_back(std::make_pair(kv.substr(0, eq), kv.substr(eq + 1)));
+	}
+
+	// second pass: write
+	partial_output = args_info.output_arg;
+	run_pass(args_info.input_arg, GOAL_WRITE_GOALX, &schema, &stats, &names);
+	partial_output = NULL;
 	exit(EXIT_SUCCESS);
 }

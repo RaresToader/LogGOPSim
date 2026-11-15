@@ -6,5 +6,6 @@ option "output"     o "Output file, will contain the binary representation of th
 option "progress"   p "Print progress information while parsing the schedule" flag off
 
 option "format"     f "Output format: legacy (fixed 39-byte records, magic 4223) or goalx (self-describing, bit-packed)" values="legacy","goalx" default="legacy" string optional
-option "schema"     s "GOALX record layout as name:width[=default],... e.g. peer:17,tag:24,size:40,gpu_id:6. Unlisted builtin fields keep their default width; width 0 drops a field" string typestr="spec" optional
+option "schema"     s "GOALX field widths: auto (default; every width chosen from the data) and/or name:width[=default],... e.g. auto,tag:32 or peer:17,tag:24,size:40,gpu_id:6. Without auto, unlisted builtin fields get legacy widths and every custom field must be listed; width 0 drops an optional field" string typestr="spec" optional
+option "layout"     l "GOALX record layout: packed (bit-packed, default) or aligned (fields rounded to 8/16/32/64 bits and naturally aligned)" values="packed","aligned" default="packed" string optional
 option "meta"       m "GOALX metadata entry key=value (can be given multiple times)" string typestr="key=value" optional multiple

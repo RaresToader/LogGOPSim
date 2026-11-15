@@ -1,0 +1,9 @@
+package "goalx-convert"
+version "1.1"
+purpose "Converts a legacy (4223) or GOALX 1.1 binary GOAL trace into GOALX 1.1"
+
+option "input"   i "Input trace (legacy or GOALX 1.1)" string typestr="filename"
+option "output"  o "Output GOALX 1.1 trace" string typestr="filename"
+option "schema"  s "Field widths: auto (default) and/or name:width[=default],... as for txt2bin" string typestr="spec" optional
+option "layout"  l "Record layout: packed or aligned" values="packed","aligned" default="packed" string optional
+option "meta"    m "Extra metadata entry key=value (can be given multiple times)" string typestr="key=value" optional multiple

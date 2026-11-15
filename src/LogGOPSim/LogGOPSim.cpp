@@ -158,7 +158,20 @@ int main(int argc, char **argv) {
   const char* build = "debug";
 #endif
   std::chrono::steady_clock::time_point tload = std::chrono::steady_clock::now();
-  Parser parser(args_info.filename_arg, args_info.save_mem_given, args_info.require_arg, args_info.decoder_arg);
+  std::vector<Requirement> reqs;
+  {
+    std::string err;
+    if (!parse_requirements(args_info.require_arg, &reqs, &err)) {
+      fprintf(stderr, "Invalid --require: %s\n", err.c_str());
+      return EXIT_FAILURE;
+    }
+  }
+  // simulator features that need fields of the trace
+  if (args_info.cpu_from_given) { Requirement r = { args_info.cpu_from_arg, 1, "--cpu-from" }; reqs.push_back(r); }
+  if (args_info.nic_from_given) { Requirement r = { args_info.nic_from_arg, 1, "--nic-from" }; reqs.push_back(r); }
+  Parser parser(args_info.filename_arg, args_info.save_mem_given, reqs, args_info.decoder_arg);
+  if (args_info.cpu_from_given) parser.UseCustomAsResource(false, args_info.cpu_from_arg, "--cpu-from");
+  if (args_info.nic_from_given) parser.UseCustomAsResource(true, args_info.nic_from_arg, "--nic-from");
   double load_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - tload).count();
   if (args_info.print_schema_given) {
     parser.PrintSchema(stdout);
