@@ -3,6 +3,11 @@ CXXFLAGS= -std=c++11 -O0 -g -pedantic -Wno-deprecated -Wall -Wno-long-long -I/op
 CCFLAGS= -O0 -g 
 LDFLAGS= -L/opt/homebrew/lib/ -lcgraph -g
 
+# dlopen for --decoder plugin:<path.so>
+ifeq ($(shell uname -s),Linux)
+LDLIBS += -ldl
+endif
+
 AUTOGEN_SRC= loggopsim_cmdline.c loggopsim_cmdline.h txt2bin_cmdline.h txt2bin_cmdline.c  
 LOGGOPSIM_OBJECTS= LogGOPSim.o 
 HLPR_OBJECTS= loggopsim_cmdline.o 
@@ -37,7 +42,7 @@ txt2bin_cmdline.h: txt2bin_cmdline.ggo
 
 
 
-%.o: %.cpp $(AUTOGEN_SRC) *.hpp 
+%.o: %.cpp $(AUTOGEN_SRC) *.hpp *.h
 	$(CXX) $(CXXFLAGS) -c $<
 
 %.o: %.c $(AUTOGEN_SRC) *.h
