@@ -43,3 +43,6 @@ clean:
 	rm -f $(BINARY)
 	rm -f txt2bin.cpp txt2bin bin2txt bin2dot simtest
 	rm -f cmdline_txt2bin.*
+
+# txt2bin has no prerequisites listed: always rebuild it
+.PHONY: all txt2bin clean
