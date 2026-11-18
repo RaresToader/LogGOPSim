@@ -28,7 +28,7 @@ std::size_t get_file_size(FILE* fd) {
 }
 
 template <typename T>
-    requires std::is_trivial_v<T>
+    requires std::is_trivially_copyable_v<T>
 void get(const std::byte* buf, size_t& pos, T& v) {
     std::memcpy(&v, buf + pos, sizeof(T));
     pos += sizeof(T);
@@ -40,12 +40,11 @@ bool is_host_little_endian() { return std::endian::native == std::endian::little
 
 namespace goalx {
 
-template <typename Decoder, typename NodeProperties>
 class GoalxFileManager {
-    static constexpr auto& field_specs = NodeSpec<NodeProperties>::fields;
-
   public:
     GoalxFileManager(const char* filename);
+
+    const Schema& schema() const { return schema_; }
 
   private:
     std::size_t mapping_length_;
@@ -54,16 +53,9 @@ class GoalxFileManager {
     std::uint32_t num_ranks_;
     std::uint32_t max_cpu_;
     std::uint32_t max_nic_;
-
-    void verify_spec() {
-        constexpr std::size_t field_specs_size =
-            std::tuple_size_v<std::remove_cvref_t<decltype(field_specs)>>;
-        std::println("{}", field_specs_size);
-    }
 };
 
-template <typename Decoder, typename NodeProperties>
-GoalxFileManager<Decoder, NodeProperties>::GoalxFileManager(const char* filename) {
+GoalxFileManager::GoalxFileManager(const char* filename) {
     using clock = std::chrono::steady_clock;
     clock::time_point start_parse_header = clock::now();
 
@@ -202,7 +194,6 @@ GoalxFileManager<Decoder, NodeProperties>::GoalxFileManager(const char* filename
 
     clock::time_point end_parse_header = clock::now();
     std::println("{}", (end_parse_header - start_parse_header).count());
-    verify_spec();
 }
 
 } // namespace goalx

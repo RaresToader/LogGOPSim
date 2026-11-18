@@ -3,7 +3,9 @@
 #include "goalx/GoalxRequirements.hpp"
 
 #include <cstdint>
-#include <tuple>
+
+#define GOALX_FIELD_SPEC(Node, member, name, flags)                                                \
+    goalx::make_field<decltype(Node::member)>(offsetof(Node, member), name, flags)
 
 /*
  * The node properties LogGOPSim expects from a trace.
@@ -18,11 +20,12 @@ struct SimulatorNodeProperties {
 
 template <>
 struct goalx::NodeSpec<SimulatorNodeProperties> {
-    static constexpr auto fields =
-        std::make_tuple(goalx::field_spec(&SimulatorNodeProperties::type, "type"),
-                        goalx::field_spec(&SimulatorNodeProperties::peer, "peer"),
-                        goalx::field_spec(&SimulatorNodeProperties::size, "size"),
-                        goalx::field_spec(&SimulatorNodeProperties::tag, "tag"),
-                        goalx::field_spec(&SimulatorNodeProperties::cpu, "cpu"),
-                        goalx::field_spec(&SimulatorNodeProperties::nic, "nic"));
+    static constexpr std::array fields = {
+        GOALX_FIELD_SPEC(SimulatorNodeProperties, type, "type", goalx::required),
+        GOALX_FIELD_SPEC(SimulatorNodeProperties, peer, "peer", goalx::required),
+        GOALX_FIELD_SPEC(SimulatorNodeProperties, size, "size", goalx::required),
+        GOALX_FIELD_SPEC(SimulatorNodeProperties, tag, "tag", goalx::required),
+        GOALX_FIELD_SPEC(SimulatorNodeProperties, cpu, "cpu", goalx::optional),
+        GOALX_FIELD_SPEC(SimulatorNodeProperties, nic, "nic", goalx::optional),
+    };
 };
