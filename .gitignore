@@ -12,3 +12,4 @@ src/LogGOPSim/*.so
 src/LogGOPSim/.opt-*
 src/LogGOPSim/build_info.h*
 *.dSYM/
+.vscode/
