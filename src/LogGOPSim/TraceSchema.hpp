@@ -47,6 +47,7 @@
 #define GOALX_VERSION        ((GOALX_VERSION_MAJOR << 8) | GOALX_VERSION_MINOR)
 #define GOALX_ENDIAN_LITTLE  1
 #define GOALX_PADDING        8
+#define GOALX_RECORD_LEN     25
 
 #define GOALX_LAYOUT_ALIGNED 0x1   /* header flags */
 
