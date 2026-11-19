@@ -50,8 +50,8 @@ class GenericDecoder {
 
   private:
     struct Slot {
-        Accessor field;       // where the value is in the record (absent: present = false)
-        std::uint16_t offset; // where it goes in the node
+        Accessor field;       // Where the value is in the record (absent: present = false).
+        std::uint16_t offset; // Where it goes in the node.
         std::uint8_t size;
     };
 
