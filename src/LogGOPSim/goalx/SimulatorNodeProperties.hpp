@@ -1,13 +1,14 @@
 #pragma once
 
-#include "goalx/GoalxRequirements.hpp"
 #include "goalx/GoalxParser.hpp"
+#include "goalx/GoalxRequirements.hpp"
 
 #include <cstdint>
 
 #define STRICT_ORDER // this is needed to keep order between Send/Recv and LocalOps in NBC case :-/
-#define LIST_MATCH // enables debugging the queues (check if empty)
-#define HOSTSYNC // this is experimental to count synchronization times induced by message transmissions
+#define LIST_MATCH   // enables debugging the queues (check if empty)
+#define HOSTSYNC     // this is experimental to count synchronization times induced by message
+                     // transmissions
 #define GOALX_FIELD_SPEC(Node, member, name, flags)                                                \
     goalx::make_field<decltype(Node::member)>(offsetof(Node, member), name, flags)
 
@@ -50,25 +51,25 @@ struct SimulatorNode : SerializedGraph<SimulatorNodeProperties>::IdentifiableNod
                   elements in the queue, it is increased for every new element, not for
                   re-insertions! Needed for correctness. */
 #endif
-    uint32_t handle;          // handle for network layer :-/} int main(int argc, char** argv) {
+    uint32_t handle; // handle for network layer :-/} int main(int argc, char** argv) {
 };
 
 struct gnp_op_comp_func {
-  bool operator()(const SimulatorNode& x, const SimulatorNode& y) const {
-    return x.type < y.type;
-  }
+    bool operator()(const SimulatorNode& x, const SimulatorNode& y) const {
+        return x.type < y.type;
+    }
 };
 
 /* This is a comparison functor that can be used to compare and sort
  * by time. */
 struct aqcompare_func {
-  bool operator()(const SimulatorNode& x, const SimulatorNode& y) const {
-    if(x.time > y.time) return true;
+    bool operator()(const SimulatorNode& x, const SimulatorNode& y) const {
+        if (x.time > y.time) return true;
 #ifdef STRICT_ORDER
-    if(x.time == y.time && x.ts > y.ts) return true;
+        if (x.time == y.time && x.ts > y.ts) return true;
 #endif
-    return false;
-  }
+        return false;
+    }
 };
 
 // mnemonic defines for op type
