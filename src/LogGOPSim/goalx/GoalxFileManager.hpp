@@ -2,6 +2,7 @@
 
 #include "TraceSchema.hpp"
 #include "goalx/GoalxRequirements.hpp"
+#include "goalx/Utils.hpp"
 
 #include <bit>
 #include <chrono>
@@ -9,59 +10,44 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <print>
 #include <sys/mman.h>
-#include <sys/stat.h>
 #include <type_traits>
-
-namespace {
-
-std::size_t get_file_size(FILE* fd) {
-    struct stat f_info;
-    int r = fstat(fileno(fd), &f_info);
-    if (r != 0) {
-        std::println(stderr, "Cannot read file length, return code {}!", r);
-        std::exit(EXIT_FAILURE);
-    }
-    return f_info.st_size;
-}
-
-template <typename T>
-    requires std::is_trivially_copyable_v<T>
-void get(const std::byte* buf, size_t& pos, T& v) {
-    std::memcpy(&v, buf + pos, sizeof(T));
-    pos += sizeof(T);
-}
-
-bool is_host_little_endian() { return std::endian::native == std::endian::little; }
-
-} // namespace
 
 namespace goalx {
 
 class GoalxFileManager {
   public:
-    GoalxFileManager(const char* filename);
+    GoalxFileManager(const std::filesystem::path& file);
+
+    ~GoalxFileManager();
 
     const Schema& schema() const { return schema_; }
+    const std::byte* mapping_start() const { return mapping_start_; }
+    std::uint32_t max_cpu() const { return max_cpu_; }
+    std::uint32_t max_nic() const { return max_nic_; }
+    std::uint32_t num_ranks() const { return num_ranks_; }
+    const std::byte* jump_table_start() const { return jump_table_start_; }
 
   private:
+    const std::byte* mapping_start_;
+    const std::byte* jump_table_start_;
     std::size_t mapping_length_;
-    std::byte* mapping_start_;
     Schema schema_;
     std::uint32_t num_ranks_;
     std::uint32_t max_cpu_;
     std::uint32_t max_nic_;
 };
 
-GoalxFileManager::GoalxFileManager(const char* filename) {
+GoalxFileManager::GoalxFileManager(const std::filesystem::path& file) {
     using clock = std::chrono::steady_clock;
     clock::time_point start_parse_header = clock::now();
 
-    FILE* fd = std::fopen(filename, "r");
+    std::FILE* fd = std::fopen(file.c_str(), "rb");
     if (fd == NULL) {
-        std::println(stderr, "Couldn't open input file {}!", filename);
+        std::println(stderr, "Couldn't open input file {}!", file.c_str());
         std::exit(EXIT_FAILURE);
     }
     mapping_length_ = get_file_size(fd);
@@ -119,7 +105,12 @@ GoalxFileManager::GoalxFileManager(const char* filename) {
     get(mapping_start_, pos, schema_.record_bits);
     get(mapping_start_, pos, schema_.record_bytes);
     get(mapping_start_, pos, num_meta);
+
     get(mapping_start_, pos, schema_.edge_bytes);
+    if (!(schema_.edge_bytes >= 1 && schema_.edge_bytes <= 4)) {
+        std::println(stderr, "The edge bytes must be between 1 and 4!");
+        std::exit(EXIT_FAILURE);
+    }
     pos += 7;
 
     if (pos != GOALX_OFF_FIELDS) {
@@ -191,9 +182,19 @@ GoalxFileManager::GoalxFileManager(const char* filename) {
         std::println(stderr, "Jump table extends past the end of the file!");
         std::exit(EXIT_FAILURE);
     }
+    jump_table_start_ = mapping_start_ + header_len;
 
     clock::time_point end_parse_header = clock::now();
-    std::println("{}", (end_parse_header - start_parse_header).count());
+    auto parse_time_sec =
+        std::chrono::duration<double>(end_parse_header - start_parse_header).count();
+    std::println("Header parse time {:.5f} seconds", parse_time_sec);
+}
+
+GoalxFileManager::~GoalxFileManager() {
+    if (munmap(const_cast<std::byte*>(mapping_start_), mapping_length_)) {
+        std::println("Cannot unmmap the file!");
+        std::exit(EXIT_FAILURE);
+    }
 }
 
 } // namespace goalx

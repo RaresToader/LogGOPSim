@@ -10,6 +10,9 @@
 /*
  * The node properties LogGOPSim expects from a trace.
  * These are what the simulator issues a decoder op with.
+ *
+ * Note: Experiment with packing of the node structure,
+ * that could save us up to 30% in space, but might harm time.
  */
 
 struct SimulatorNodeProperties {

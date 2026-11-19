@@ -1,7 +1,10 @@
 #include "goalx/GoalxFileManager.hpp"
 #include "goalx/GoalxGenericDecoder.hpp"
+#include "goalx/GoalxParser.hpp"
 #include "goalx/SimulatorNodeProperties.hpp"
 
+#include <filesystem>
+#include <iostream>
 #include <print>
 
 /**
@@ -14,15 +17,34 @@
  * ```
  */
 
+using MyDecoder = goalx::GenericDecoder<SimulatorNodeProperties>;
+
+using MySerializedGraph = goalx::SerializedGraph<SimulatorNodeProperties, goalx::GenericDecoder>;
+
+using MyParser = goalx::Parser<SimulatorNodeProperties, goalx::GenericDecoder>;
+
+struct TimestampedNode : MySerializedGraph::IdentifiableNode {
+    double time;
+};
+
 int main() {
-    const char* filename = "tests/goalx/schedule.bin";
-    goalx::GoalxFileManager manager{filename};
+    const char* input_filename = "tests/goalx/schedule.bin";
+    goalx::GoalxFileManager file_manager{input_filename};
     std::println("Success creating the file manager");
-    auto dec = goalx::GenericDecoder<SimulatorNodeProperties>::create(manager.schema());
-    if (!dec) {
-        std::println(stderr, "{}", dec.error());
-        return 1;
+
+    MyParser parser{file_manager};
+    std::println("Success creating the parser");
+    std::println("Parser has {} schedules", parser.schedules().size());
+
+    std::filesystem::path output_path = "tests/goalx/schedule.txt";
+    std::ofstream output_file;
+    output_file.exceptions(std::ios::failbit | std::ios::badbit);
+    output_file.open(output_path);
+    parser.schedules()[1].write_as_dot(output_file);
+
+    for (auto& schedule : parser.schedules()) {
+        schedule.write_as_dot(std::cout);
     }
-    std::println("Success creating the generic decoder");
+
     return 0;
 }
