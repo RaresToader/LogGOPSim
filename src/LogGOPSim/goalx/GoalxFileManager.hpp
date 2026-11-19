@@ -45,6 +45,7 @@ class GoalxFileManager {
     GoalxFileManager(const char* filename);
 
     const Schema& schema() const { return schema_; }
+    const std::uint32_t num_ranks() const { return num_ranks_; }
 
   private:
     std::size_t mapping_length_;
