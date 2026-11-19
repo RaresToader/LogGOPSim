@@ -1,3 +1,7 @@
+#pragma once
+
+#include "loggopsim_cmdline.h"
+
 #include <map>
 #include <math.h>
 #include <vector>

@@ -1,3 +1,8 @@
+#pragma once
+
+#include <chrono>
+#include <functional>
+
 namespace goalx {
 
 template <typename T>

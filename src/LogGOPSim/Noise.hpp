@@ -1,3 +1,5 @@
+#pragma once
+
 #include "loggopsim_cmdline.h"
 #include <iostream>
 #include <assert.h>
@@ -5,6 +7,8 @@
 #include <vector>
 #include <limits>
 #include <random>
+
+using btime_t = uint64_t;
 
 class Noise {
   private:

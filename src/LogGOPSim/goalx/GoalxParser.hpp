@@ -31,6 +31,19 @@ class Parser {
     const Schedules& schedules() const { return schedules_; }
     Schedules& schedules() { return schedules_; }
 
+    template <typename OutputNode>
+    void GetExecutableNodes(std::vector<OutputNode>& out, std::uint32_t rank) {
+        return schedules_[rank].template GetExecutableNodes<OutputNode>(out);
+    }
+
+    void MarkNodeAsDone(std::uint32_t rank, std::uint32_t offset) {
+        return schedules_[rank].MarkNodeAsDone(offset);
+    }
+
+    void MarkNodeAsStarted(std::uint32_t rank, std::uint32_t offset) {
+        return schedules_[rank].MarkNodeAsStarted(offset);
+    }
+
   private:
     Schedules schedules_;
     const GoalxFileManager& file_manager_;

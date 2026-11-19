@@ -4,10 +4,11 @@
 #include "Noise.hpp"
 #include "TimelineVisualization.hpp"
 #include "goalx/GoalxFileManager.hpp"
-#include "goalx/GoalxGenericDecoder.hpp"
+#include "goalx/GoalxParser.hpp"
 #include "goalx/GoalxRequirements.hpp"
 #include "goalx/GoalxTimedComputation.hpp"
 #include "goalx/SimulatorNodeProperties.hpp"
+#include "goalx/decoders/GoalxGenericDecoder.hpp"
 #include "loggopsim_cmdline.h"
 
 #include <algorithm>
@@ -170,7 +171,12 @@ int main(int argc, char** argv) {
 
     auto [file_manager, time_create_schema] =
         goalx::timed([&args_info] { return goalx::GoalxFileManager{args_info.filename_arg}; });
-    GoalxParser parser{file_manager};
+    auto decoder_ret = MyDecoder::create(file_manager.schema());
+    if (!decoder_ret.has_value()) {
+        std::println("Error constructing the decoder: {}", decoder_ret.error());
+        std::exit(EXIT_FAILURE);
+    }
+    goalx::Parser<MyDecoder> parser{file_manager, decoder_ret.value()};
 
     const uint32_t num_ranks = file_manager.num_ranks();
     // The largest value of a field in the trace, 0 if the trace doesn't have it.
@@ -300,8 +306,8 @@ int main(int argc, char** argv) {
                 btime_t noise = osnoise.get_noise(elem.rank, elem.time, elem.time + elem.size);
                 nexto[elem.rank][elem.cpu] = elem.time + elem.size + noise;
                 // satisfy irequires and requires
-                parser.MarkNodeAsStarted(elem);
-                parser.MarkNodeAsDone(elem);
+                parser.MarkNodeAsStarted(elem.rank, elem.offset);
+                parser.MarkNodeAsDone(elem.rank, elem.offset);
                 check_hosts.push_back(elem.rank);
                 // add to timeline
                 tlviz.add_loclop(elem.rank, elem.time, elem.time + elem.size, elem.cpu);
@@ -320,7 +326,7 @@ int main(int argc, char** argv) {
             if (std::max(nexto[elem.rank][elem.cpu], nextgs[elem.rank][elem.nic]) <=
                 elem.time) { // local o,g available!
                 if (print) std::println("-- satisfy local irequires");
-                parser.MarkNodeAsStarted(elem);
+                parser.MarkNodeAsStarted(elem.rank, elem.offset);
                 check_hosts.push_back(elem.rank);
 
                 // check if OS Noise occurred
@@ -361,7 +367,7 @@ int main(int argc, char** argv) {
                         std::println("-- [{}] eager -- satisfy local requires at t: {}", send.rank,
                                      elem.starttime + o);
                     // satisfy local requires
-                    parser.MarkNodeAsDone(send);
+                    parser.MarkNodeAsDone(send.rank, send.offset);
                 } else {
                     if (print)
                         std::println("-- [{}] start rendezvous message to: {} (offset: {})",
@@ -379,7 +385,7 @@ int main(int argc, char** argv) {
                 std::println("[{}] found recv from {} - t: {} (CPU: {})", elem.rank, elem.peer,
                              elem.time, elem.cpu);
 
-            parser.MarkNodeAsStarted(elem);
+            parser.MarkNodeAsStarted(elem.rank, elem.offset);
             check_hosts.push_back(elem.rank);
             if (print) std::println("-- satisfy local irequires");
 
@@ -431,7 +437,7 @@ int main(int argc, char** argv) {
                 tlviz.add_orecv(elem.rank, elem.time, elem.time + o, elem.cpu);
 
                 // satisfy local requires
-                parser.MarkNodeAsDone(elem);
+                parser.MarkNodeAsDone(elem.rank, elem.offset);
                 check_hosts.push_back(elem.rank);
                 if (print) std::println("-- satisfy local requires");
             } else { // not found in local UQ - add to RQ

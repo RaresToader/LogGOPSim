@@ -1,7 +1,10 @@
 #pragma once
 
+#include "Noise.hpp"
 #include "goalx/GoalxParser.hpp"
 #include "goalx/GoalxRequirements.hpp"
+#include "goalx/GoalxSerializedGraph.hpp"
+#include "goalx/decoders/GoalxGenericDecoder.hpp"
 
 #include <cstdint>
 
@@ -38,9 +41,10 @@ struct goalx::NodeSpec<SimulatorNodeProperties> {
     };
 };
 
-using btime_t = uint64_t;
+using MyDecoder = goalx::GenericDecoder<SimulatorNodeProperties>;
+
 // TODO: Because of extending from the base class, fields are no longer ordered by size.
-struct SimulatorNode : SerializedGraph<SimulatorNodeProperties>::IdentifiableNode {
+struct SimulatorNode : goalx::SerializedGraph<MyDecoder>::IdentifiableNode {
     btime_t time;
     btime_t starttime;
 #ifdef HOSTSYNC
