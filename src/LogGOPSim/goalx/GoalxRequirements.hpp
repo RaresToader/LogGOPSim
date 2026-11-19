@@ -9,9 +9,9 @@ namespace goalx {
 enum : std::uint8_t { required = 0, optional = 1 };
 
 struct FieldSpec {
-    std::uint16_t offset; // of the member in the node
-    std::uint8_t size;    // of the member: 1, 2, 4 or 8
-    const char* name;     // of the schema field
+    std::uint16_t offset; // Offset of the member in the node.
+    std::uint8_t size;    // Size of the member (must be 1, 2, 4 or 8).
+    const char* name;     // Name of the schema field.
     std::uint8_t flags;
 };
 
