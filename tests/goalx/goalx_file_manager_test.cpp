@@ -52,5 +52,13 @@ int main() {
         schedule.write_as_dot(std::cout);
     }
 
+    std::vector<TimestampedNode> out;
+    parser.schedules()[1].GetExecutableNodes(out);
+    std::println("Frontier size: {}", out.size());
+    for (auto& node : out) {
+        node.time = 3.14;
+        std::println("{{tag: {}, size: {}, type: {}}}", node.tag, node.size, node.type);
+    }
+
     return 0;
 }

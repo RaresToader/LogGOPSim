@@ -28,11 +28,6 @@ class Parser {
 
     explicit Parser(const GoalxFileManager& file_manager, const D& decoder);
 
-    Parser(const Parser&) = delete;
-    Parser& operator=(const Parser&) = delete;
-    Parser(Parser&&) = delete;
-    Parser& operator=(Parser&&) = delete;
-
     const Schedules& schedules() const { return schedules_; }
     Schedules& schedules() { return schedules_; }
 
