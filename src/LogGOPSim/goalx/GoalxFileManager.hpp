@@ -2,7 +2,7 @@
 
 #include "TraceSchema.hpp"
 #include "goalx/GoalxRequirements.hpp"
-#include "goalx/Utils.hpp"
+#include "goalx/GoalxUtils.hpp"
 
 #include <bit>
 #include <chrono>

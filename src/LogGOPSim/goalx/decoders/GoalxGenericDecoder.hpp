@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TraceSchema.hpp"
+#include "goalx/GoalxDecoder.hpp"
 #include "goalx/GoalxRequirements.hpp"
 
 #include <array>
@@ -12,11 +13,6 @@
 #include <type_traits>
 
 namespace goalx {
-
-/* Indicating `count` appendix entries starting at entry `first`. */
-struct EdgeRange {
-    std::uint32_t count, first;
-};
 
 /*
  * The generic decoder: Everything is decided at run time. Creating it matches
@@ -34,6 +30,9 @@ class GenericDecoder {
     static constexpr auto& field_specs = NodeSpec<NodeProperties>::fields;
 
   public:
+    using node_type = NodeProperties;
+    static constexpr const char* name = "GenericDecoder";
+
     /* The decoder or the error when the schema doesn't provide what NodeProperties + graph need. */
     static std::expected<GenericDecoder, std::string> create(const Schema& schema);
 
